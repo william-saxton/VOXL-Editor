@@ -1,0 +1,229 @@
+name: Release
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      voxl_native_tag:
+        description: 'voxl native lib release tag to consume (default: latest)'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: write
+
+env:
+  VOXL_REPO: william-saxton/voxl
+  VOXL_NATIVE_TAG: ${{ github.event.inputs.voxl_native_tag || 'latest' }}
+
+jobs:
+  # ── Linux: fetch native lib + Godot export ──────────────────────────────
+  build-linux:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Godot export templates (Linux)
+        id: cache-templates-linux
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/godot/export_templates/4.6.stable
+          key: godot-templates-linux-4.6-stable
+
+      - name: Download Godot export templates
+        if: steps.cache-templates-linux.outputs.cache-hit != 'true'
+        run: |
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.6.stable"
+          mkdir -p "$TEMPLATE_DIR"
+          wget -q https://github.com/godotengine/godot-builds/releases/download/4.6-stable/Godot_v4.6-stable_export_templates.tpz -O /tmp/templates.zip
+          unzip -q /tmp/templates.zip -d /tmp/templates-tmp
+          mv /tmp/templates-tmp/templates/* "$TEMPLATE_DIR/"
+          rm -rf /tmp/templates.zip /tmp/templates-tmp
+
+      - name: Fetch voxl native lib (Linux)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p bin
+          ASSET=libvoxl_native-linux-x86_64.tar.gz
+          if [ "$VOXL_NATIVE_TAG" = "latest" ]; then
+            URL="https://github.com/${VOXL_REPO}/releases/latest/download/${ASSET}"
+          else
+            URL="https://github.com/${VOXL_REPO}/releases/download/${VOXL_NATIVE_TAG}/${ASSET}"
+          fi
+          curl -fsSL -o "/tmp/${ASSET}" "$URL"
+          tar -xzf "/tmp/${ASSET}" -C bin
+          test -f bin/libvoxl_native.linux.template_release.x86_64.so
+
+      - name: Import Godot project
+        run: godot --headless --import
+
+      - name: Export Linux build
+        run: |
+          mkdir -p build
+          godot --headless --export-release "Linux" build/VOXL-Editor.x86_64
+
+      - name: Package Linux build
+        run: |
+          chmod +x build/VOXL-Editor.x86_64
+          STAGE=build/VOXL-Editor-linux-x86_64
+          mkdir -p "$STAGE/bin"
+          find build -maxdepth 1 -name 'VOXL-Editor.*' -type f -exec cp {} "$STAGE/" \;
+          cp bin/libvoxl_native.linux.template_release.x86_64.so "$STAGE/bin/"
+          tar czf build/VOXL-Editor-linux-x86_64.tar.gz -C build VOXL-Editor-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: build/VOXL-Editor-linux-x86_64.tar.gz
+
+  # ── Windows: fetch native lib + Godot export ───────────────────────────
+  build-windows:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch voxl native lib (Windows)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          $asset = "libvoxl_native-windows-x86_64.zip"
+          if ($env:VOXL_NATIVE_TAG -eq "latest") {
+            $url = "https://github.com/$env:VOXL_REPO/releases/latest/download/$asset"
+          } else {
+            $url = "https://github.com/$env:VOXL_REPO/releases/download/$env:VOXL_NATIVE_TAG/$asset"
+          }
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\$asset"
+          Expand-Archive -LiteralPath "$env:TEMP\$asset" -DestinationPath bin -Force
+          if (!(Test-Path "bin\libvoxl_native.windows.template_release.x86_64.dll")) {
+            throw "native lib not found after extract"
+          }
+
+      - name: Cache Godot + templates (Windows)
+        id: cache-godot-windows
+        uses: actions/cache@v4
+        with:
+          path: |
+            godot-bin
+            ~/AppData/Roaming/Godot/export_templates/4.6.stable
+          key: godot-windows-4.6-stable
+
+      - name: Download Godot
+        if: steps.cache-godot-windows.outputs.cache-hit != 'true'
+        run: |
+          $version = "4.6-stable"
+          Invoke-WebRequest -Uri "https://github.com/godotengine/godot-builds/releases/download/$version/Godot_v${version}_win64.exe.zip" -OutFile godot.zip
+          Expand-Archive godot.zip -DestinationPath godot-bin
+          Move-Item "godot-bin\Godot_v${version}_win64.exe" "godot-bin\godot.exe"
+
+      - name: Download Godot export templates
+        if: steps.cache-godot-windows.outputs.cache-hit != 'true'
+        run: |
+          $version = "4.6-stable"
+          Invoke-WebRequest -Uri "https://github.com/godotengine/godot-builds/releases/download/$version/Godot_v${version}_export_templates.tpz" -OutFile templates.zip
+          $templateDir = "$env:APPDATA\Godot\export_templates\4.6.stable"
+          New-Item -ItemType Directory -Force -Path $templateDir
+          Expand-Archive templates.zip -DestinationPath templates-tmp
+          Move-Item "templates-tmp\templates\*" $templateDir
+
+      - name: Import Godot project
+        run: godot-bin\godot.exe --headless --import
+
+      - name: Export Windows build
+        run: |
+          New-Item -ItemType Directory -Force -Path build
+          $proc = Start-Process -FilePath "godot-bin\godot.exe" -ArgumentList '--headless --export-release "Windows Desktop" build\VOXL-Editor.exe' -Wait -PassThru -NoNewWindow
+          Write-Host "Godot exit code: $($proc.ExitCode)"
+          if ($proc.ExitCode -ne 0) { throw "Godot export failed with exit code $($proc.ExitCode)" }
+          if (!(Test-Path "build\VOXL-Editor.exe")) { throw "Export produced no output file" }
+
+      - name: Package Windows build
+        run: |
+          $stage = "build\VOXL-Editor-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path "$stage\bin" | Out-Null
+          $files = Get-ChildItem "build\VOXL-Editor.*" -File
+          if ($files.Count -eq 0) { throw "No build output found" }
+          $files | Copy-Item -Destination "$stage\"
+          Copy-Item "bin\libvoxl_native.windows.template_release.x86_64.dll" -Destination "$stage\bin\"
+          Compress-Archive -Path "$stage" -DestinationPath "build\VOXL-Editor-windows-x86_64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: build/VOXL-Editor-windows-x86_64.zip
+
+  # ── Create GitHub Release with all artifacts ──────────────────────────
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Compute next version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f VERSION ]; then
+            MAJOR=$(cat VERSION | tr -d '[:space:]')
+          else
+            MAJOR=0
+          fi
+          if ! [[ "$MAJOR" =~ ^[0-9]+$ ]]; then
+            echo "::error::VERSION file must contain a single integer (the major version). Got: '$MAJOR'"
+            exit 1
+          fi
+          LATEST_MINOR=$(git tag -l "v${MAJOR}.*" \
+            | grep -E "^v${MAJOR}\.[0-9]+\.[0-9]+$" \
+            | sed -E "s/^v${MAJOR}\.([0-9]+)\..*/\1/" \
+            | sort -n \
+            | tail -1)
+          if [ -z "$LATEST_MINOR" ]; then
+            NEXT_MINOR=0
+          else
+            NEXT_MINOR=$((LATEST_MINOR + 1))
+          fi
+          VERSION="${MAJOR}.${NEXT_MINOR}.0"
+          TAG="v${VERSION}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" --json tagName >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists."
+            exit 1
+          fi
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "VOXL-Editor ${{ steps.version.outputs.tag }}" \
+            --notes "$(cat <<'EOF'
+          ## Editor Builds
+          The editor archives ship with the native GDExtension library bundled in
+          `bin/` next to the executable — extract and run, no separate setup.
+          - `VOXL-Editor-linux-x86_64.tar.gz` — Linux editor
+          - `VOXL-Editor-windows-x86_64.zip` — Windows editor
+
+          Native lib version consumed from `voxl` release: ${{ env.VOXL_NATIVE_TAG }}
+
+          ## Changes
+          PR: #${{ github.event.pull_request.number }} — ${{ github.event.pull_request.title }}
+
+          ${{ github.event.pull_request.body }}
+          EOF
+          )" \
+            artifacts/linux-build/VOXL-Editor-linux-x86_64.tar.gz \
+            artifacts/windows-build/VOXL-Editor-windows-x86_64.zip

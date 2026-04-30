@@ -1,0 +1,12 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+voxl.zip
+/build/*
+/bin/**
+.scons-cache/
+
+# Native C++ build artifacts
+native/.sconsign.dblite
+native/src/*.obj
+native/src/*.obj.import
