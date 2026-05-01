@@ -22,19 +22,32 @@ jobs:
   # ── Linux: fetch native lib + Godot export ──────────────────────────────
   build-linux:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Godot export templates (Linux)
-        id: cache-templates-linux
+      - name: Cache Godot + templates (Linux)
+        id: cache-godot-linux
         uses: actions/cache@v4
         with:
-          path: ~/.local/share/godot/export_templates/4.6.stable
-          key: godot-templates-linux-4.6-stable
+          path: |
+            godot-bin
+            ~/.local/share/godot/export_templates/4.6.stable
+          key: godot-linux-4.6-stable
+
+      - name: Download Godot
+        if: steps.cache-godot-linux.outputs.cache-hit != 'true'
+        run: |
+          VERSION=4.6-stable
+          mkdir -p godot-bin
+          wget -q "https://github.com/godotengine/godot-builds/releases/download/${VERSION}/Godot_v${VERSION}_linux.x86_64.zip" -O /tmp/godot.zip
+          unzip -q /tmp/godot.zip -d godot-bin
+          mv "godot-bin/Godot_v${VERSION}_linux.x86_64" godot-bin/godot
+          chmod +x godot-bin/godot
+          rm /tmp/godot.zip
 
       - name: Download Godot export templates
-        if: steps.cache-templates-linux.outputs.cache-hit != 'true'
+        if: steps.cache-godot-linux.outputs.cache-hit != 'true'
         run: |
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.6.stable"
           mkdir -p "$TEMPLATE_DIR"
@@ -59,12 +72,12 @@ jobs:
           test -f bin/libvoxl_native.linux.template_release.x86_64.so
 
       - name: Import Godot project
-        run: godot --headless --import
+        run: godot-bin/godot --headless --import
 
       - name: Export Linux build
         run: |
           mkdir -p build
-          godot --headless --export-release "Linux" build/VOXL-Editor.x86_64
+          godot-bin/godot --headless --export-release "Linux" build/VOXL-Editor.x86_64
 
       - name: Package Linux build
         run: |

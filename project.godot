@@ -33,5 +33,4 @@ enabled=PackedStringArray("res://addons/godot-css-theme/plugin.cfg", "res://addo
 
 [rendering]
 
-renderer/rendering_method="forward_plus"
 rendering_device/driver.windows="d3d12"
