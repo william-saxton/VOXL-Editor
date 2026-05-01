@@ -7,6 +7,7 @@ extends Node
 signal request_failed(error: String)
 
 const MAX_CONCURRENT := 3
+const REQUEST_TIMEOUT := 10.0  ## Seconds before an in-flight request fails. Without this, a black-holed endpoint hangs forever.
 
 var endpoint: String = ""  ## e.g. "http://192.168.1.50:9000"
 
@@ -94,9 +95,11 @@ func _dispatch(entry: Dictionary) -> void:
 	_active_count += 1
 	var http := HTTPRequest.new()
 	http.use_threads = true
+	http.timeout = REQUEST_TIMEOUT
 	add_child(http)
 
-	var url: String = endpoint.rstrip("/") + str(entry["path"])
+	var normalized_endpoint := _normalize_endpoint(endpoint)
+	var url: String = normalized_endpoint + str(entry["path"])
 
 	var headers: PackedStringArray = []
 	if not (entry["content_type"] as String).is_empty():
@@ -123,7 +126,26 @@ func _dispatch(entry: Dictionary) -> void:
 		_active_count -= 1
 		http.queue_free()
 		request_failed.emit("HTTP request failed with error %d for %s" % [err, url])
+		_invoke_failure_callback(entry["callback"])
 		_flush_queue()
+
+
+## Ensures the endpoint has a scheme. Users frequently type bare host:port.
+func _normalize_endpoint(raw: String) -> String:
+	var trimmed := raw.strip_edges().rstrip("/")
+	if trimmed.is_empty():
+		return trimmed
+	if not (trimmed.begins_with("http://") or trimmed.begins_with("https://")):
+		trimmed = "http://" + trimmed
+	return trimmed
+
+
+## Always notify the caller that a request resolved, even on failure, so UI
+## flows like the "Test Connection" dialog don't hang waiting for a callback
+## that would otherwise never fire.
+func _invoke_failure_callback(callback: Callable) -> void:
+	if callback.is_valid():
+		callback.call({})
 
 
 func _on_http_done(result: int, response_code: int, headers: PackedStringArray,
@@ -134,12 +156,14 @@ func _on_http_done(result: int, response_code: int, headers: PackedStringArray,
 
 	if result != HTTPRequest.RESULT_SUCCESS:
 		request_failed.emit("HTTP result %d (response %d) for %s" % [result, response_code, context_key])
+		_invoke_failure_callback(callback)
 		_flush_queue()
 		return
 
 	if response_code >= 400:
 		var err_body := body.get_string_from_utf8()
 		request_failed.emit("HTTP %d for %s: %s" % [response_code, context_key, err_body.left(256)])
+		_invoke_failure_callback(callback)
 		_flush_queue()
 		return
 
