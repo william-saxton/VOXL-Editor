@@ -29,6 +29,14 @@ var _editor_grid: EditorGrid
 var _highlight: HoverHighlight
 var _tool_manager: EditorToolManager
 var _viewport_container: SubViewportContainer
+var _sun_light: DirectionalLight3D
+
+# ── Sun state (session-only; matches SunDialog defaults) ──
+var _sun_enabled: bool = true
+var _sun_azimuth_deg: float = 45.0
+var _sun_elevation_deg: float = 55.0
+var _sun_energy: float = 1.0
+var _sun_dialog: SunDialog
 var _metadata_tool: MetadataTool
 var _metadata_dialog: MetadataEditDialog
 var _export_dialog: TileExportDialog
@@ -131,6 +139,8 @@ func _ready() -> void:
 	_editor_grid = %EditorGrid
 	_highlight = %HoverHighlight
 	_viewport_container = %ViewportContainer
+	_sun_light = %SunLight
+	_apply_sun()
 
 	_apply_theme()
 	_setup_file_dialogs()
@@ -311,6 +321,10 @@ func _setup_menu() -> void:
 	view_menu.add_item("Player Ref Size / Position...", 31)
 	view_menu.add_check_item("Rift Delver Floor", 32)
 	view_menu.add_item("Floor Depth...", 33)
+	view_menu.add_separator()
+	view_menu.add_check_item("Sun Enabled", 34)
+	view_menu.set_item_checked(view_menu.get_item_index(34), _sun_enabled)
+	view_menu.add_item("Sun...", 35)
 	view_menu.add_separator()
 	view_menu.add_item("UI Scale: 75%", 10)
 	view_menu.add_item("UI Scale: 100%", 11)
@@ -1204,6 +1218,16 @@ func _on_view_menu(id: int) -> void:
 			vm3.set_item_checked(vm3.get_item_index(32), fvis)
 		33:
 			_show_floor_depth_dialog()
+		34:
+			_sun_enabled = not _sun_enabled
+			_apply_sun()
+			var vm4: PopupMenu = %MenuBar.get_child(2)
+			vm4.set_item_checked(vm4.get_item_index(34), _sun_enabled)
+			if _sun_dialog:
+				_sun_dialog.sync_state(_sun_enabled, _sun_azimuth_deg,
+						_sun_elevation_deg, _sun_energy)
+		35:
+			_show_sun_dialog()
 
 
 func _show_ref_size_dialog() -> void:
@@ -1255,6 +1279,52 @@ func _show_floor_depth_dialog() -> void:
 	dialog.canceled.connect(func(): dialog.queue_free())
 	add_child(dialog)
 	dialog.popup_centered()
+
+
+func _show_sun_dialog() -> void:
+	if not _sun_dialog:
+		_sun_dialog = SunDialog.new()
+		_sun_dialog.sun_changed.connect(_on_sun_changed)
+		add_child(_sun_dialog)
+	_sun_dialog.sync_state(_sun_enabled, _sun_azimuth_deg, _sun_elevation_deg, _sun_energy)
+	_sun_dialog.popup_centered()
+
+
+func _on_sun_changed(enabled: bool, azimuth_deg: float, elevation_deg: float, energy: float) -> void:
+	_sun_enabled = enabled
+	_sun_azimuth_deg = azimuth_deg
+	_sun_elevation_deg = elevation_deg
+	_sun_energy = energy
+	_apply_sun()
+	# Keep the menu's check item in sync with the dialog toggle.
+	var vm: PopupMenu = %MenuBar.get_child(2)
+	vm.set_item_checked(vm.get_item_index(34), _sun_enabled)
+
+
+## Push the current sun state to the DirectionalLight3D and the LIT shader.
+func _apply_sun() -> void:
+	# sun_dir = direction from surface toward the sun (Y is up).
+	# elevation 0° → on the horizon, 90° → directly overhead.
+	var az := deg_to_rad(_sun_azimuth_deg)
+	var el := deg_to_rad(_sun_elevation_deg)
+	var ce := cos(el)
+	var sun_dir := Vector3(ce * sin(az), sin(el), ce * cos(az)).normalized()
+
+	if _sun_light:
+		_sun_light.visible = _sun_enabled
+		_sun_light.light_energy = _sun_energy
+		# DirectionalLight3D shines along its local -Z. We want -Z = -sun_dir,
+		# so basis.z = sun_dir. Build an orthonormal basis around that.
+		var z := sun_dir
+		var ref_up := Vector3.UP if absf(z.dot(Vector3.UP)) < 0.99 else Vector3.FORWARD
+		var x := ref_up.cross(z).normalized()
+		var y := z.cross(x).normalized()
+		var tr := _sun_light.transform
+		tr.basis = Basis(x, y, z)
+		_sun_light.transform = tr
+
+	if _tile_renderer:
+		_tile_renderer.set_sun(_sun_enabled, sun_dir, _sun_energy)
 
 
 func _make_labeled_spin(parent: VBoxContainer, label: String, min_v: float, max_v: float, step: float, value: float) -> SpinBox:

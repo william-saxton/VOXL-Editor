@@ -55,6 +55,16 @@ var clip_y: int = 0:
 		_update_clip()
 
 
+## Push sun state into the LIT shader uniforms. Direction is the world-space
+## vector pointing from surfaces toward the sun (i.e. up-ish when overhead).
+func set_sun(enabled: bool, direction: Vector3, energy: float) -> void:
+	if not _mat_lit:
+		return
+	_mat_lit.set_shader_parameter("sun_enabled", enabled)
+	_mat_lit.set_shader_parameter("sun_dir", direction.normalized())
+	_mat_lit.set_shader_parameter("sun_energy", energy)
+
+
 func _ready() -> void:
 	# Unshaded: flat vertex colors, no lighting
 	_mat_unshaded = StandardMaterial3D.new()
@@ -66,11 +76,18 @@ func _ready() -> void:
 	_mat_unshaded.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_mat_unshaded.cull_mode = BaseMaterial3D.CULL_DISABLED
 
-	# Lit: vertex colors with per-pixel shading, double-sided with correct normals
+	# Lit: vertex colors with per-pixel shading, double-sided with correct normals.
+	# Sun direction/enabled/energy come from uniforms so the SunLight controls
+	# affect this view mode (the shader is `unshaded`, so a real DirectionalLight3D
+	# would not reach it).
 	var lit_shader := Shader.new()
 	lit_shader.code = """
 shader_type spatial;
 render_mode unshaded, cull_disabled;
+
+uniform bool sun_enabled = true;
+uniform vec3 sun_dir = vec3(0.4, 0.7, 0.5);
+uniform float sun_energy : hint_range(0.0, 4.0) = 1.0;
 
 varying vec3 vtx_color;
 varying vec3 world_normal;
@@ -89,11 +106,14 @@ void vertex() {
 }
 
 void fragment() {
-	vec3 light_dir = normalize(vec3(0.4, 0.7, 0.5));
-	float ndl = dot(normalize(world_normal), light_dir);
-	// Half-lambert: wraps lighting so back faces get ~0.25 instead of 0
-	float shade = ndl * 0.5 + 0.5;
-	shade = shade * 0.6 + 0.4; // remap to 0.4..1.0 range
+	float shade = 1.0;
+	if (sun_enabled) {
+		float ndl = dot(normalize(world_normal), normalize(sun_dir));
+		// Half-lambert wrap so back faces still receive some light.
+		float wrap = ndl * 0.5 + 0.5;
+		// Ambient floor 0.4, sun contributes the remaining 0..0.6 scaled by energy.
+		shade = 0.4 + wrap * 0.6 * sun_energy;
+	}
 	ALBEDO = vtx_color * shade;
 }
 """
