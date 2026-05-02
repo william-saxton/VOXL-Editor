@@ -59,6 +59,10 @@ func _ready() -> void:
 	# Unshaded: flat vertex colors, no lighting
 	_mat_unshaded = StandardMaterial3D.new()
 	_mat_unshaded.vertex_color_use_as_albedo = true
+	# Palette colors are authored in sRGB (color picker UI). Without this flag,
+	# Godot treats vertex color as linear and the rendered voxel ends up much
+	# lighter than the swatch.
+	_mat_unshaded.vertex_color_is_srgb = true
 	_mat_unshaded.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_mat_unshaded.cull_mode = BaseMaterial3D.CULL_DISABLED
 
@@ -71,8 +75,16 @@ render_mode unshaded, cull_disabled;
 varying vec3 vtx_color;
 varying vec3 world_normal;
 
+// Palette colors are authored in sRGB. ALBEDO is interpreted as linear, so
+// without this conversion the voxel renders much lighter than the swatch.
+vec3 srgb_to_linear(vec3 c) {
+	return mix(pow((c + vec3(0.055)) / vec3(1.055), vec3(2.4)),
+			c / vec3(12.92),
+			lessThan(c, vec3(0.04045)));
+}
+
 void vertex() {
-	vtx_color = COLOR.rgb;
+	vtx_color = srgb_to_linear(COLOR.rgb);
 	world_normal = (MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz;
 }
 
@@ -104,6 +116,7 @@ void fragment() {
 	# Default surface material for Textured mode (entries without custom materials)
 	_mat_default_surface = StandardMaterial3D.new()
 	_mat_default_surface.vertex_color_use_as_albedo = true
+	_mat_default_surface.vertex_color_is_srgb = true
 	_mat_default_surface.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 	_mat_default_surface.cull_mode = BaseMaterial3D.CULL_BACK
 
