@@ -37,6 +37,44 @@ func copy(tile: WFCTileDef, selection: VoxelSelection) -> void:
 			_data[pos - origin] = vid
 
 
+## Load all non-empty voxels from another tile into the clipboard, offset so
+## the bounding box of the content starts at (0,0,0). Used by the Place Tile
+## sub-tool to stamp another tile into the current one — anchor semantics
+## match copy/paste (cursor = content's minimum corner).
+func load_from_tile(tile: WFCTileDef) -> void:
+	_data.clear()
+	if not tile:
+		_size = Vector3i.ZERO
+		return
+	var size := tile.get_tile_size()
+
+	# First pass: bounding box of non-empty voxels.
+	var min_p := Vector3i(size.x, size.y, size.z)
+	var max_p := Vector3i(-1, -1, -1)
+	for z in size.z:
+		for y in size.y:
+			for x in size.x:
+				if tile.get_voxel(x, y, z) != 0:
+					if x < min_p.x: min_p.x = x
+					if y < min_p.y: min_p.y = y
+					if z < min_p.z: min_p.z = z
+					if x > max_p.x: max_p.x = x
+					if y > max_p.y: max_p.y = y
+					if z > max_p.z: max_p.z = z
+
+	if max_p.x < 0:
+		_size = Vector3i.ZERO
+		return
+
+	_size = max_p - min_p + Vector3i.ONE
+	for z in range(min_p.z, max_p.z + 1):
+		for y in range(min_p.y, max_p.y + 1):
+			for x in range(min_p.x, max_p.x + 1):
+				var vid := tile.get_voxel(x, y, z)
+				if vid != 0:
+					_data[Vector3i(x - min_p.x, y - min_p.y, z - min_p.z)] = vid
+
+
 ## Paste clipboard contents at the given anchor position.
 ## Returns a dictionary of { positions: Array[Vector3i], voxel_ids: Dictionary }
 ## for the undo system to apply.

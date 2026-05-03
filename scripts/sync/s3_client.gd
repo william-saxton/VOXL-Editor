@@ -117,11 +117,11 @@ func _dispatch(entry: Dictionary) -> void:
 		_on_http_done.bind(http, entry["handler"], entry["context_key"], entry["callback"])
 	)
 
-	var body_str := ""
-	if not (entry["body"] as PackedByteArray).is_empty():
-		body_str = (entry["body"] as PackedByteArray).get_string_from_utf8()
-
-	var err := http.request(url, headers, method, body_str)
+	# Use request_raw — uploaded bodies (e.g. .voxltile blobs) are binary
+	# (gzip-compressed). HTTPRequest.request() takes a String body, which
+	# silently corrupts non-UTF-8 bytes via get_string_from_utf8().
+	var body_bytes: PackedByteArray = entry["body"]
+	var err := http.request_raw(url, headers, method, body_bytes)
 	if err != OK:
 		_active_count -= 1
 		http.queue_free()

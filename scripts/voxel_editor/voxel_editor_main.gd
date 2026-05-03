@@ -117,6 +117,9 @@ var _ui_scale: float = 1.0
 # ── Procedural shader dialog ──
 var _shader_dialog: AcceptDialog  # ShaderEditorDialog
 
+# ── Place Tile sub-tool ──
+var _tile_picker_dialog: TilePickerDialog
+
 # ── File dialogs ──
 var _open_dialog: FileDialog
 var _save_dialog: FileDialog
@@ -224,41 +227,41 @@ func _apply_theme() -> void:
 func _setup_file_dialogs() -> void:
 	_open_dialog = FileDialog.new()
 	_open_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	_open_dialog.access = FileDialog.ACCESS_RESOURCES
 	_open_dialog.filters = PackedStringArray(["*.tres ; Tile Resource", "*.res ; Tile Resource"])
 	_open_dialog.title = "Open WFC Tile"
+	FileDialogUtil.configure_access(_open_dialog)
 	_open_dialog.file_selected.connect(_on_open_file)
 	add_child(_open_dialog)
 
 	_save_dialog = FileDialog.new()
 	_save_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-	_save_dialog.access = FileDialog.ACCESS_RESOURCES
 	_save_dialog.filters = PackedStringArray(["*.tres ; Tile Resource"])
 	_save_dialog.title = "Save WFC Tile"
+	FileDialogUtil.configure_access(_save_dialog)
 	_save_dialog.file_selected.connect(_on_save_file)
 	add_child(_save_dialog)
 
 	_import_palette_dialog = FileDialog.new()
 	_import_palette_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	_import_palette_dialog.access = FileDialog.ACCESS_RESOURCES
 	_import_palette_dialog.filters = PackedStringArray(["*.tres ; Palette Resource"])
 	_import_palette_dialog.title = "Import Palette"
+	FileDialogUtil.configure_access(_import_palette_dialog)
 	_import_palette_dialog.file_selected.connect(_on_import_palette)
 	add_child(_import_palette_dialog)
 
 	_export_palette_dialog = FileDialog.new()
 	_export_palette_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-	_export_palette_dialog.access = FileDialog.ACCESS_RESOURCES
 	_export_palette_dialog.filters = PackedStringArray(["*.tres ; Palette Resource"])
 	_export_palette_dialog.title = "Export Palette"
+	FileDialogUtil.configure_access(_export_palette_dialog)
 	_export_palette_dialog.file_selected.connect(_on_export_palette)
 	add_child(_export_palette_dialog)
 
 	_import_scene_dialog = FileDialog.new()
 	_import_scene_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	_import_scene_dialog.access = FileDialog.ACCESS_RESOURCES
 	_import_scene_dialog.filters = PackedStringArray(["*.tres ; Tile Resource", "*.res ; Tile Resource"])
 	_import_scene_dialog.title = "Import Scene Into Tile"
+	FileDialogUtil.configure_access(_import_scene_dialog)
 	_import_scene_dialog.file_selected.connect(_on_import_scene)
 	add_child(_import_scene_dialog)
 
@@ -666,6 +669,13 @@ func _update_sub_tools() -> void:
 			_tool_manager.current_tool_type = EditorToolManager.ToolType.PROCEDURAL)
 		_sub_tools_vbox.add_child(btn_proc)
 		_sub_tool_buttons.append(btn_proc)
+
+		# Place Tile sub-tool — Add only. Stamps an entire saved tile at the cursor.
+		if _tool_manager.current_mode == EditorToolManager.PrimaryMode.ADD:
+			var btn_place_tile := _make_sub_tool_button("Place Tile", "", "")
+			btn_place_tile.pressed.connect(_on_place_tile_pressed)
+			_sub_tools_vbox.add_child(btn_place_tile)
+			_sub_tool_buttons.append(btn_place_tile)
 
 	_update_context_bar_visibility()
 
@@ -1279,6 +1289,29 @@ func _show_floor_depth_dialog() -> void:
 	dialog.canceled.connect(func(): dialog.queue_free())
 	add_child(dialog)
 	dialog.popup_centered()
+
+
+func _on_place_tile_pressed() -> void:
+	# Place Tile lives under the Add main tool. Paste mode dispatches in the
+	# viewport click handler before tool_type is checked, so we don't need to
+	# touch current_tool_type — and doing so would clear any in-progress
+	# persistent paste from a prior Place Tile session.
+	_tool_manager.current_mode = EditorToolManager.PrimaryMode.ADD
+	if not _tile_picker_dialog:
+		_tile_picker_dialog = TilePickerDialog.new()
+		_tile_picker_dialog.tile_picked.connect(_on_tile_picked_for_place)
+		add_child(_tile_picker_dialog)
+	_tile_picker_dialog.popup_picker()
+
+
+func _on_tile_picked_for_place(picked_tile: WFCTileDef) -> void:
+	if not _tool_manager:
+		return
+	var ok := _tool_manager.begin_persistent_paste_from_tile(picked_tile)
+	if ok:
+		_update_status("Place Tile: %s — click to stamp, Esc to cancel" % picked_tile.tile_name)
+	else:
+		_update_status("Place Tile: source tile is empty")
 
 
 func _show_sun_dialog() -> void:

@@ -21,8 +21,11 @@ func resize(new_width: int, new_height: int) -> void:
 
 func _resize(w: int, h: int) -> void:
 	var old_data := cell_data.duplicate()
-	var old_w := grid_width
-	var old_h := grid_height
+	# On first init `cell_data` is empty even though grid_width/grid_height
+	# still hold their default values — treat that as "no prior data" so the
+	# copy loop doesn't read out of bounds.
+	var old_w := grid_width if old_data.size() > 0 else 0
+	var old_h := grid_height if old_data.size() > 0 else 0
 	grid_width = w
 	grid_height = h
 	cell_data.resize(w * h)

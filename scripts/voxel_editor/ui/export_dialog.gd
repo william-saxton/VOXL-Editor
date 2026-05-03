@@ -75,9 +75,9 @@ func _ready() -> void:
 	# File dialog
 	_file_dialog = FileDialog.new()
 	_file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-	_file_dialog.access = FileDialog.ACCESS_RESOURCES
 	_file_dialog.filters = PackedStringArray(["*.tres ; Tile Resource"])
 	_file_dialog.title = "Export Tile As..."
+	FileDialogUtil.configure_access(_file_dialog)
 	_file_dialog.file_selected.connect(func(p): _path_edit.text = p)
 	add_child(_file_dialog)
 

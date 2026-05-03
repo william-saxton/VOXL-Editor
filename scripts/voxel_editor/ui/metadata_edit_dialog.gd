@@ -117,9 +117,9 @@ func _ready() -> void:
 	# Scene file dialog
 	_scene_dialog = FileDialog.new()
 	_scene_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	_scene_dialog.access = FileDialog.ACCESS_RESOURCES
 	_scene_dialog.filters = PackedStringArray(["*.tscn ; Scene", "*.scn ; Scene"])
 	_scene_dialog.title = "Select Particle Scene"
+	FileDialogUtil.configure_access(_scene_dialog)
 	_scene_dialog.file_selected.connect(_on_scene_selected)
 	add_child(_scene_dialog)
 
@@ -153,13 +153,13 @@ func _ready() -> void:
 	# Shader file dialog
 	_shader_dialog = FileDialog.new()
 	_shader_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	_shader_dialog.access = FileDialog.ACCESS_RESOURCES
 	_shader_dialog.filters = PackedStringArray([
 		"*.gdshader ; Shader",
 		"*.tres ; ShaderMaterial",
 		"*.res ; ShaderMaterial",
 	])
 	_shader_dialog.title = "Select Shader"
+	FileDialogUtil.configure_access(_shader_dialog)
 	_shader_dialog.file_selected.connect(_on_shader_selected)
 	add_child(_shader_dialog)
 

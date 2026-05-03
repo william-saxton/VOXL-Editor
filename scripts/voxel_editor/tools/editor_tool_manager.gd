@@ -44,6 +44,12 @@ var current_tool_type: ToolType = ToolType.SHAPE:
 			_arch_state = 0
 			if _proc_preview_instance:
 				_proc_preview_instance.visible = false
+		# Switching to any other tool exits persistent paste (Place Tile).
+		if _persistent_paste or _paste_mode:
+			_persistent_paste = false
+			_paste_mode = false
+			if _shape_preview:
+				_shape_preview.clear()
 		current_tool_type = value
 		# Procedural tool always uses box shape and ADD mode for region definition
 		if value == ToolType.PROCEDURAL:
@@ -82,6 +88,7 @@ var _selection_renderer: SelectionRenderer
 var _transform_gizmo: TransformGizmo
 var _metadata_renderer: MetadataRenderer
 var _paste_mode := false  ## True when floating paste preview is active
+var _persistent_paste := false  ## When true, paste mode re-engages after each commit (Place Tile sub-tool)
 var _mirror_place_mode := false  ## True when placing a custom mirror plane
 var _select_ref_id: int = -1  ## Voxel ID at first click for criteria filtering
 
@@ -402,6 +409,7 @@ func _unhandled_input(event: InputEvent) -> void:
 					get_viewport().set_input_as_handled()
 				elif _paste_mode:
 					_paste_mode = false
+					_persistent_paste = false
 					if _shape_preview:
 						_shape_preview.clear()
 					get_viewport().set_input_as_handled()
@@ -2351,6 +2359,9 @@ func begin_paste() -> void:
 
 
 func _commit_paste(tile: WFCTileDef, anchor: Vector3i) -> void:
+	# Persistent paste (Place Tile sub-tool) keeps the preview engaged after
+	# each click so the user can stamp the same tile multiple times.
+	var keep_active := _persistent_paste
 	_paste_mode = false
 	var paste_data := clipboard.get_paste_data(anchor, tile)
 	var positions: Array = paste_data.positions
@@ -2385,6 +2396,30 @@ func _commit_paste(tile: WFCTileDef, anchor: Vector3i) -> void:
 			undo_manager.add_voxel_change(action, p, old_id, new_id)
 
 	undo_manager.apply_and_commit(action, tile, renderer)
+	if _shape_preview:
+		_shape_preview.clear()
+	if keep_active:
+		_paste_mode = true
+
+
+## Load every non-empty voxel from `source_tile` into the clipboard and enter
+## persistent paste mode (preview re-engages after each click). Returns true
+## if there was at least one voxel to place.
+func begin_persistent_paste_from_tile(source_tile: WFCTileDef) -> bool:
+	if not source_tile:
+		return false
+	clipboard.load_from_tile(source_tile)
+	if clipboard.is_empty():
+		return false
+	_persistent_paste = true
+	begin_paste()
+	return true
+
+
+## Exit persistent paste mode and any active paste preview.
+func cancel_persistent_paste() -> void:
+	_persistent_paste = false
+	_paste_mode = false
 	if _shape_preview:
 		_shape_preview.clear()
 

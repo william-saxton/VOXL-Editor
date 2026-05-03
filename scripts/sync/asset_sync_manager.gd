@@ -350,6 +350,11 @@ func push_tile(tile: WFCTileDef, palette: VoxelPalette) -> void:
 	var key := "%s.voxltile" % tile.tile_name.to_snake_case()
 	if key == ".voxltile":
 		key = "untitled.voxltile"
+	# Also write the cache locally so the pushed tile is immediately available
+	# to features like the Place Tile sub-tool, without waiting for a poll round
+	# trip (and without a race that has been observed to leave a truncated file).
+	var local_path := "%s/%s/%s" % [CACHE_DIR, TILE_BUCKET, key]
+	_write_bytes(local_path, data)
 	_s3.put_object(TILE_BUCKET, key, data, "application/octet-stream",
 		func(result: Dictionary) -> void:
 			asset_uploaded.emit(TILE_BUCKET, result.get("key", key), result.get("etag", ""))
@@ -410,6 +415,13 @@ func pull_tile(key: String) -> void:
 	_s3.get_object(TILE_BUCKET, key,
 		func(result: Dictionary) -> void:
 			var body: PackedByteArray = result.get("body", PackedByteArray())
+			# Refuse to overwrite the local cache with a body that obviously
+			# isn't a valid .voxltile (e.g. an error response or a partial
+			# download). Avoids the previously-seen failure mode where a
+			# truncated server response replaced a good local file.
+			if deserialize_tile(body).is_empty():
+				_on_s3_error("Pulled tile %s is invalid (%d bytes); not caching" % [key, body.size()])
+				return
 			var local_path := "%s/%s/%s" % [CACHE_DIR, TILE_BUCKET, key]
 			_write_bytes(local_path, body)
 			asset_downloaded.emit(TILE_BUCKET, key, local_path)

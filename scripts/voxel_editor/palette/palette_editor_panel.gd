@@ -147,10 +147,10 @@ func _ready() -> void:
 	# File dialog for loading shader materials
 	_shader_dialog = FileDialog.new()
 	_shader_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	_shader_dialog.access = FileDialog.ACCESS_RESOURCES
 	_shader_dialog.filters = PackedStringArray([
 		"*.gdshader ; Shader", "*.tres ; Resource", "*.res ; Resource", "*.material ; Material"])
 	_shader_dialog.title = "Load Shader Material"
+	FileDialogUtil.configure_access(_shader_dialog)
 	_shader_dialog.file_selected.connect(_on_shader_file_selected)
 	add_child(_shader_dialog)
 
