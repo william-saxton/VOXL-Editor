@@ -48,6 +48,8 @@ var _gradient_panel: PanelContainer  ## GradientSelectionPanel
 var _settings_dialog: AcceptDialog
 var _right_vbox: VBoxContainer
 var _custom_planes_list: ItemList
+var _right_tabs: TabContainer
+var _tiles_panel: TilesPanel
 
 # ── Left sidebar ──
 var _main_tool_group: ButtonGroup
@@ -117,9 +119,6 @@ var _ui_scale: float = 1.0
 # ── Procedural shader dialog ──
 var _shader_dialog: AcceptDialog  # ShaderEditorDialog
 
-# ── Place Tile sub-tool ──
-var _tile_picker_dialog: TilePickerDialog
-
 # ── File dialogs ──
 var _open_dialog: FileDialog
 var _save_dialog: FileDialog
@@ -129,7 +128,6 @@ var _import_scene_dialog: FileDialog
 
 # ── Remote sync dialogs ──
 var _sync_config_dialog: SyncConfigDialog
-var _remote_browser: RemoteBrowserDialog
 var _remote_status_label: Label
 var _native_status_label: Label
 
@@ -375,8 +373,6 @@ func _setup_menu() -> void:
 	# REMOTE
 	var remote_menu := PopupMenu.new()
 	remote_menu.name = "Remote"
-	remote_menu.add_item("Browse Remote Assets...", 0)
-	remote_menu.add_separator()
 	remote_menu.add_item("Push Current Tile", 10)
 	remote_menu.add_item("Push Current Palette", 11)
 	remote_menu.add_separator()
@@ -670,13 +666,6 @@ func _update_sub_tools() -> void:
 		_sub_tools_vbox.add_child(btn_proc)
 		_sub_tool_buttons.append(btn_proc)
 
-		# Place Tile sub-tool — Add only. Stamps an entire saved tile at the cursor.
-		if _tool_manager.current_mode == EditorToolManager.PrimaryMode.ADD:
-			var btn_place_tile := _make_sub_tool_button("Place Tile", "", "")
-			btn_place_tile.pressed.connect(_on_place_tile_pressed)
-			_sub_tools_vbox.add_child(btn_place_tile)
-			_sub_tool_buttons.append(btn_place_tile)
-
 	_update_context_bar_visibility()
 
 
@@ -810,50 +799,79 @@ func _update_transform_toggle(btn_move: Button, btn_rotate: Button, btn_scale: B
 func _setup_right_panel() -> void:
 	_right_vbox = %RightVBox
 
+	_right_tabs = TabContainer.new()
+	_right_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_right_tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_right_vbox.add_child(_right_tabs)
+
+	# ── Palette tab ──
+	var palette_tab := VBoxContainer.new()
+	palette_tab.name = "Palette"
+	palette_tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_right_tabs.add_child(palette_tab)
+
 	# Palette panel (color swatches grouped by material) — custom class, must be created in code
 	_palette_panel = PalettePanel.new()
 	_palette_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_palette_panel.entry_selected.connect(_on_palette_entry_selected)
 	_palette_panel.add_entry_requested.connect(_on_palette_add_entry_for_material)
 	_palette_panel.multi_selection_changed.connect(_on_palette_multi_selection_changed)
-	_right_vbox.add_child(_palette_panel)
+	palette_tab.add_child(_palette_panel)
 
-	_right_vbox.add_child(HSeparator.new())
+	palette_tab.add_child(HSeparator.new())
 
 	# Gradient selection panel (multi-select weights)
 	_gradient_panel = load("res://scripts/voxel_editor/palette/gradient_selection_panel.gd").new()
-	_right_vbox.add_child(_gradient_panel)
+	palette_tab.add_child(_gradient_panel)
 
-	_right_vbox.add_child(HSeparator.new())
+	palette_tab.add_child(HSeparator.new())
 
 	# Palette editor (entry properties, add/remove) — custom class
 	_palette_editor = PaletteEditorPanel.new()
 	_palette_editor.entry_changed.connect(_on_palette_entry_edited)
 	_palette_editor.palette_switched.connect(_on_palette_switched)
 	_palette_editor.entry_removed.connect(_on_palette_entry_removed)
-	_right_vbox.add_child(_palette_editor)
+	palette_tab.add_child(_palette_editor)
 
-	_right_vbox.add_child(HSeparator.new())
+	palette_tab.add_child(HSeparator.new())
 
 	# Custom mirror planes list
 	var planes_label := Label.new()
 	planes_label.text = "Custom Mirror Planes"
 	planes_label.add_theme_color_override("font_color", COLOR_ON_SURFACE_DIM)
 	planes_label.add_theme_font_size_override("font_size", 11)
-	_right_vbox.add_child(planes_label)
+	palette_tab.add_child(planes_label)
 
 	_custom_planes_list = ItemList.new()
 	_custom_planes_list.custom_minimum_size.y = 48
 	_custom_planes_list.max_text_lines = 1
 	_custom_planes_list.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_right_vbox.add_child(_custom_planes_list)
+	palette_tab.add_child(_custom_planes_list)
 
 	var planes_btn_row := HBoxContainer.new()
 	var btn_remove_plane := Button.new()
 	btn_remove_plane.text = "Remove Selected"
 	btn_remove_plane.pressed.connect(_on_remove_selected_plane)
 	planes_btn_row.add_child(btn_remove_plane)
-	_right_vbox.add_child(planes_btn_row)
+	palette_tab.add_child(planes_btn_row)
+
+	# ── Tiles tab ──
+	_tiles_panel = TilesPanel.new()
+	_tiles_panel.name = "Tiles"
+	_tiles_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_tiles_panel.tile_place_requested.connect(_on_tile_place_requested_from_panel)
+	_right_tabs.add_child(_tiles_panel)
+
+
+func _on_tile_place_requested_from_panel(picked_tile: WFCTileDef) -> void:
+	if not _tool_manager:
+		return
+	_tool_manager.current_mode = EditorToolManager.PrimaryMode.ADD
+	var ok := _tool_manager.begin_persistent_paste_from_tile(picked_tile)
+	if ok:
+		_update_status("Place Tile: %s — click to stamp, Esc to cancel" % picked_tile.tile_name)
+	else:
+		_update_status("Place Tile: source tile is empty")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -924,11 +942,6 @@ func _setup_remote() -> void:
 	_sync_config_dialog = SyncConfigDialog.new()
 	add_child(_sync_config_dialog)
 
-	_remote_browser = RemoteBrowserDialog.new()
-	_remote_browser.palette_pull_requested.connect(_on_remote_palette_pulled)
-	_remote_browser.tile_pull_requested.connect(_on_remote_tile_pulled)
-	add_child(_remote_browser)
-
 	# Connection status indicator in the status bar
 	_remote_status_label = Label.new()
 	_remote_status_label.text = ""
@@ -950,17 +963,52 @@ func _schedule_palette_push() -> void:
 
 func _on_remote_menu(id: int) -> void:
 	match id:
-		0:
-			_remote_browser.show_browser()
 		10:
-			AssetSyncManager.push_tile(_tile, _palette)
-			_update_status("Pushing tile...")
+			_push_current_tile()
 		11:
 			AssetSyncManager.push_palette(_palette)
 			_update_status("Pushing palette...")
 		20:
 			_sync_config_dialog.populate()
 			_sync_config_dialog.popup_centered()
+
+
+func _push_current_tile() -> void:
+	if not _tile:
+		_update_status("No tile open")
+		return
+	if _tile.tile_name.strip_edges().is_empty():
+		_update_status("Set a tile name in Tile Settings before pushing")
+		return
+	# Capture a thumbnail of the current viewport so the Tiles panel has
+	# something to show. The user-visible viewport is good enough for now;
+	# they can switch to Rift Delver view first for a cleaner image.
+	_tile.thumbnail_png = _capture_tile_thumbnail()
+	if not AssetSyncManager.push_tile(_tile, _palette):
+		# push_tile already logged the specific reason via _on_s3_error.
+		return
+	_update_status("Pushing tile: %s..." % _tile.tile_name)
+	if _tiles_panel:
+		_tiles_panel.refresh()
+
+
+## Snapshot the editor viewport, downscale to a thumbnail, and return PNG bytes.
+## Returns an empty array on failure.
+func _capture_tile_thumbnail() -> PackedByteArray:
+	if not _viewport:
+		return PackedByteArray()
+	var tex := _viewport.get_texture()
+	if not tex:
+		return PackedByteArray()
+	var img := tex.get_image()
+	if not img or img.is_empty():
+		return PackedByteArray()
+	# Downscale to a reasonable preview size while keeping aspect ratio.
+	const TARGET_W := 192
+	if img.get_width() > TARGET_W:
+		var h := int(round(img.get_height() * float(TARGET_W) / img.get_width()))
+		img.resize(TARGET_W, h, Image.INTERPOLATE_BILINEAR)
+	return img.save_png_to_buffer()
 
 
 func _on_remote_connection_changed(ok: bool) -> void:
@@ -990,33 +1038,17 @@ func _on_remote_palette_pulled(palette: VoxelPalette) -> void:
 	_update_status("Pulled palette: %s" % palette.palette_name)
 
 
-func _on_remote_tile_pulled(tile: WFCTileDef, palette: VoxelPalette) -> void:
-	if not tile:
-		return
-	_tile = tile
-	if palette:
-		_palette_set = TilePaletteSet.new()
-		_palette_set.palettes[0] = palette
-		_palette = _palette_set.get_active()
-		_palette_panel.set_palette_set(_palette_set)
-		_palette_editor.set_palette_set(_palette_set)
-	_gradient_panel.set_palette(_palette)
-	_tile_renderer.set_tile(_tile, _palette)
-	_tool_manager.undo_manager.clear()
-	_sync_tile_properties()
-	_tool_manager.refresh_metadata_markers()
-	_update_status("Pulled tile: %s" % tile.tile_name)
-
-
 func _on_remote_auto_pulled(bucket: String, key: String, _local_path: String) -> void:
-	# Auto-pulled assets: load palettes into the set, notify for tiles
+	# Auto-pulled palettes are loaded into the active set. Tiles are cached
+	# silently — they show up in the Tiles panel rather than disrupting the
+	# user's current scene.
 	if bucket == AssetSyncManager.PALETTE_BUCKET:
 		var palette := AssetSyncManager.palette_from_cache(key)
 		if palette:
 			_on_remote_palette_pulled(palette)
-	# Tiles are not auto-opened (would disrupt current work) — just notify
 	elif bucket == AssetSyncManager.TILE_BUCKET:
-		_update_status("New remote tile available: %s" % key)
+		if _tiles_panel:
+			_tiles_panel.refresh()
 
 
 func _on_new_remote_assets(bucket: String, keys: PackedStringArray) -> void:
@@ -1289,29 +1321,6 @@ func _show_floor_depth_dialog() -> void:
 	dialog.canceled.connect(func(): dialog.queue_free())
 	add_child(dialog)
 	dialog.popup_centered()
-
-
-func _on_place_tile_pressed() -> void:
-	# Place Tile lives under the Add main tool. Paste mode dispatches in the
-	# viewport click handler before tool_type is checked, so we don't need to
-	# touch current_tool_type — and doing so would clear any in-progress
-	# persistent paste from a prior Place Tile session.
-	_tool_manager.current_mode = EditorToolManager.PrimaryMode.ADD
-	if not _tile_picker_dialog:
-		_tile_picker_dialog = TilePickerDialog.new()
-		_tile_picker_dialog.tile_picked.connect(_on_tile_picked_for_place)
-		add_child(_tile_picker_dialog)
-	_tile_picker_dialog.popup_picker()
-
-
-func _on_tile_picked_for_place(picked_tile: WFCTileDef) -> void:
-	if not _tool_manager:
-		return
-	var ok := _tool_manager.begin_persistent_paste_from_tile(picked_tile)
-	if ok:
-		_update_status("Place Tile: %s — click to stamp, Esc to cancel" % picked_tile.tile_name)
-	else:
-		_update_status("Place Tile: source tile is empty")
 
 
 func _show_sun_dialog() -> void:

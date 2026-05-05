@@ -102,6 +102,7 @@ func test_connection() -> void:
 		if connected:
 			if auto_pull:
 				_initial_pull_palettes()
+				_initial_pull_tiles()
 			refresh_remote_listing(PALETTE_BUCKET)
 			refresh_remote_listing(TILE_BUCKET)
 			_restart_poll_timer()
@@ -116,6 +117,31 @@ func _initial_pull_palettes() -> void:
 			var key: String = obj.get("key", "")
 			if not key.is_empty():
 				pull_palette(key)
+	)
+
+
+## On startup, pull all remote tiles whose local cache is missing or stale.
+## Locally-only tiles are left alone (they may just need to be pushed up).
+func _initial_pull_tiles() -> void:
+	_s3.list_objects(TILE_BUCKET, func(result: Dictionary) -> void:
+		var objects: Array = result.get("objects", [])
+		var local_etags := {}
+		for obj in get_cached_listing(TILE_BUCKET):
+			local_etags[obj.get("key", "")] = obj.get("etag", "")
+		var pulled := 0
+		for obj in objects:
+			var key: String = obj.get("key", "")
+			var etag: String = obj.get("etag", "")
+			if key.is_empty():
+				continue
+			var local_path := "%s/%s/%s" % [CACHE_DIR, TILE_BUCKET, key]
+			# Skip if local file exists and the recorded etag matches.
+			if FileAccess.file_exists(local_path) and local_etags.get(key, "") == etag:
+				continue
+			pull_tile(key)
+			pulled += 1
+		# Update the listing cache so subsequent diffs see the new etags.
+		_save_listing_cache(TILE_BUCKET, objects)
 	)
 
 
@@ -342,14 +368,19 @@ func palette_from_cache(key: String) -> VoxelPalette:
 # Push tile  (.voxltile binary format)
 # ---------------------------------------------------------------------------
 
-func push_tile(tile: WFCTileDef, palette: VoxelPalette) -> void:
+## Push a tile to the remote. Returns false (and reports an error) if the
+## tile has no name set — pushing without a name would overwrite anything
+## stored under the previous "untitled" fallback key.
+func push_tile(tile: WFCTileDef, palette: VoxelPalette) -> bool:
 	if not connected:
 		_on_s3_error("Not connected to remote")
-		return
+		return false
+	var name_trimmed := tile.tile_name.strip_edges()
+	if name_trimmed.is_empty():
+		_on_s3_error("Tile must have a name before it can be pushed")
+		return false
 	var data := serialize_tile(tile, palette)
-	var key := "%s.voxltile" % tile.tile_name.to_snake_case()
-	if key == ".voxltile":
-		key = "untitled.voxltile"
+	var key := "%s.voxltile" % name_trimmed.to_snake_case()
 	# Also write the cache locally so the pushed tile is immediately available
 	# to features like the Place Tile sub-tool, without waiting for a poll round
 	# trip (and without a race that has been observed to leave a truncated file).
@@ -359,10 +390,17 @@ func push_tile(tile: WFCTileDef, palette: VoxelPalette) -> void:
 		func(result: Dictionary) -> void:
 			asset_uploaded.emit(TILE_BUCKET, result.get("key", key), result.get("etag", ""))
 	)
+	return true
 
 
-## Serialize a tile to the .voxltile binary format:
-##   [4 bytes: header_len LE] [header_len bytes: JSON header] [gzip voxel_data]
+## Serialize a tile to the .voxltile binary format (format_version 2):
+##   [4 bytes: header_len LE]
+##   [header_len bytes: JSON header — includes thumbnail_size]
+##   [thumbnail_size bytes: PNG bytes (may be 0)]
+##   [rest: gzip voxel_data]
+##
+## Format_version 1 had no thumbnail_size; deserialization treats a missing
+## field as 0, which keeps old files readable.
 func serialize_tile(tile: WFCTileDef, palette: VoxelPalette) -> PackedByteArray:
 	var palette_entries := []
 	if palette:
@@ -373,8 +411,10 @@ func serialize_tile(tile: WFCTileDef, palette: VoxelPalette) -> PackedByteArray:
 				"base_material": entry.base_material,
 			})
 
+	var thumbnail: PackedByteArray = tile.thumbnail_png if tile.thumbnail_png else PackedByteArray()
+
 	var header := {
-		"format_version": 1,
+		"format_version": 2,
 		"tile_name": tile.tile_name,
 		"tile_size_x": tile.tile_size_x,
 		"tile_size_y": tile.tile_size_y,
@@ -390,17 +430,23 @@ func serialize_tile(tile: WFCTileDef, palette: VoxelPalette) -> PackedByteArray:
 		"biome": tile.biome,
 		"metadata_points": tile.metadata_points,
 		"palette_entries": palette_entries,
+		"thumbnail_size": thumbnail.size(),
 	}
 	var header_bytes := JSON.stringify(header).to_utf8_buffer()
 	var compressed := tile.voxel_data.compress(FileAccess.COMPRESSION_GZIP)
 
 	var out := PackedByteArray()
-	out.resize(4 + header_bytes.size() + compressed.size())
+	out.resize(4 + header_bytes.size() + thumbnail.size() + compressed.size())
 	out.encode_u32(0, header_bytes.size())
+	var off := 4
 	for i in header_bytes.size():
-		out[4 + i] = header_bytes[i]
+		out[off + i] = header_bytes[i]
+	off += header_bytes.size()
+	for i in thumbnail.size():
+		out[off + i] = thumbnail[i]
+	off += thumbnail.size()
 	for i in compressed.size():
-		out[4 + header_bytes.size() + i] = compressed[i]
+		out[off + i] = compressed[i]
 	return out
 
 
@@ -460,7 +506,14 @@ func deserialize_tile(data: PackedByteArray) -> Dictionary:
 	var tags_arr: Array = header.get("tags", [])
 	tile.tags = PackedStringArray(tags_arr)
 
-	var compressed := data.slice(4 + header_len)
+	# Format v2 stores a PNG thumbnail between the header and the gzip body.
+	# Older files set thumbnail_size to 0 (missing field defaults to 0).
+	var thumbnail_size := int(header.get("thumbnail_size", 0))
+	var body_start := 4 + header_len + thumbnail_size
+	if thumbnail_size > 0 and data.size() >= body_start:
+		tile.thumbnail_png = data.slice(4 + header_len, body_start)
+
+	var compressed := data.slice(body_start)
 	var expected_size := tile.tile_size_x * tile.tile_size_y * tile.tile_size_z * 2
 	tile.voxel_data = compressed.decompress(expected_size, FileAccess.COMPRESSION_GZIP)
 

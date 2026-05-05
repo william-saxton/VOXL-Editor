@@ -44,6 +44,10 @@ const TILE_VOL := TILE_X * TILE_Y * TILE_Z
 ## Saved alongside the tile so palette is preserved when reopening.
 @export var palette_entries: Array[Dictionary] = []
 
+## Optional PNG thumbnail of the tile, captured at push time. Used by the
+## Tiles panel to preview cached tiles. Empty if no thumbnail available.
+@export var thumbnail_png: PackedByteArray = []
+
 
 ## Get the tile volume based on instance dimensions.
 func get_tile_vol() -> int:
