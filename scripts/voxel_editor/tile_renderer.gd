@@ -83,13 +83,13 @@ func _ready() -> void:
 	var lit_shader := Shader.new()
 	lit_shader.code = """
 shader_type spatial;
-render_mode unshaded, cull_disabled;
+render_mode unshaded, cull_disabled, depth_prepass_alpha;
 
 uniform bool sun_enabled = true;
 uniform vec3 sun_dir = vec3(0.4, 0.7, 0.5);
 uniform float sun_energy : hint_range(0.0, 4.0) = 1.0;
 
-varying vec3 vtx_color;
+varying vec4 vtx_color;
 varying vec3 world_normal;
 
 // Palette colors are authored in sRGB. ALBEDO is interpreted as linear, so
@@ -101,7 +101,7 @@ vec3 srgb_to_linear(vec3 c) {
 }
 
 void vertex() {
-	vtx_color = srgb_to_linear(COLOR.rgb);
+	vtx_color = vec4(srgb_to_linear(COLOR.rgb), COLOR.a);
 	world_normal = (MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz;
 }
 
@@ -114,7 +114,8 @@ void fragment() {
 		// Ambient floor 0.4, sun contributes the remaining 0..0.6 scaled by energy.
 		shade = 0.4 + wrap * 0.6 * sun_energy;
 	}
-	ALBEDO = vtx_color * shade;
+	ALBEDO = vtx_color.rgb * shade;
+	ALPHA = vtx_color.a;
 }
 """
 	_mat_lit = ShaderMaterial.new()
